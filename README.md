@@ -10,19 +10,16 @@ direct downloads, and API links. The bot manages your catalog in MongoDB;
 the server retrieves media from Telegram as it streams. A dark interface,
 warm gold accents, and a gateway mark carry the identity from bot to browser.
 
-## Choose your package
+## GateStream-Lite v2.0.33
 
-| Package | Purpose |
-| --- | --- |
-| `GateStream-GitHub.zip` | Full source, Cloudflare Worker, GitHub Actions deployment, and tests |
-| `GateStream-HuggingFace.zip` | Docker Space hosting files, bot, player, and Python tests |
+This repository contains the complete Python origin, Telegram bot, web interface,
+Dockerfile, scripts and tests. Extract the source ZIP so these files sit directly
+inside your project directory. Existing Cloudflare Workers continue to proxy this
+origin; their deployment files are maintained in the main GateStream repository.
 
-Extract the ZIP and upload the **contents** of its project folder, so `README.md`,
-`Dockerfile`, and `bot/` sit at the repository root.
-
-**Deploy the bot:** [Hugging Face guide](HUGGING_FACE.md) or the local/Docker steps below.
-**Deploy the edge proxy:** [Cloudflare guide](CLOUDFLARE.md), included in the GitHub package.
-**Change the Telegram profile:** [Branding guide](BRANDING.md).
+**Serv00 / FreeBSD:** follow [SERV00.md](SERV00.md) for installation, reserved ports,
+SSL/reverse proxy, resource tuning and recovery. Other hosts can use the steps below.
+See [CHANGELOG.md](CHANGELOG.md) for the configuration and shutdown fixes.
 
 ## What you can do
 
@@ -45,8 +42,8 @@ Use Python 3.11 or newer, a MongoDB endpoint reachable from the host, and a
 Telegram bot created through BotFather. Give the bot access to your source channels.
 
 ```bash
-git clone https://github.com/Chowdhury-Siam/GateStream.git GateStream
-cd GateStream
+git clone https://github.com/Chowdhury-Siam/GateStream-Lite.git
+cd GateStream-Lite
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -61,12 +58,18 @@ address, then start the bot:
 python -m bot
 ```
 
-Project repository: [Chowdhury-Siam/GateStream](https://github.com/Chowdhury-Siam/GateStream).
+Project repository: [Chowdhury-Siam/GateStream-Lite](https://github.com/Chowdhury-Siam/GateStream-Lite).
 Run only one deployment per main Telegram bot token.
 
 ## Configuration
 
-Use `.env` locally. On Hugging Face, use **Settings → Variables and secrets**;
+Use `.env` locally. Values come from system environment (including empty values),
+then `.env`, legacy `config.env`, literal `start.sh` assignments, and finally defaults.
+Comments never supply settings. Invalid numeric values fail validation; empty
+optional worker tokens disable extras. No shell code is executed. All components
+use `bot/config.py`. See [SERV00.md](SERV00.md) for exact parsing/empty-value rules.
+
+On Hugging Face, use **Settings → Variables and secrets**;
 do not upload a filled `.env` file.
 
 | Setting | Required | Purpose |
@@ -91,19 +94,20 @@ On the bot host, `BASE_URL` is the address users should open. For your existing
 Worker deployment:
 
 ```dotenv
-BASE_URL=https://ftl-stream-proxy.ftl-556.workers.dev
+BASE_URL=https://your-worker.example
 ```
 
 In GitHub Actions settings, `CLOUDFLARE_ORIGIN_URL` is the **direct hosting
 address**, not a `/stream/...` link and not the Worker URL. Example:
 
 ```text
-https://siamreal-hfvps.hf.space
+https://your-origin.example
 ```
 
-The GitHub version includes a workflow that accepts that setting as a repository
-Variable or Secret. Cloudflare credentials belong in GitHub Secrets. See the
-Cloudflare guide for all settings and the deployment steps.
+The main [GateStream repository](https://github.com/Chowdhury-Siam/GateStream)
+maintains the Worker deployment workflow. Its origin setting accepts a repository
+Variable or Secret; Cloudflare credentials belong in GitHub Secrets. Lite keeps
+the origin HTTP routes compatible with that separately deployed Worker.
 
 ## Telegram access and commands
 
@@ -201,8 +205,9 @@ docker build -t gatestream .
 docker run -d --name gatestream -p 8080:7860 --env-file .env -e PORT=7860 --restart unless-stopped gatestream
 ```
 
-Set `BASE_URL` for the public address mapped to this container. For Spaces, use `GateStream-HuggingFace.zip`; its README includes the Docker
-SDK metadata and port `7860` configuration.
+Set `BASE_URL` for the public address mapped to this container. For Spaces, retain your README YAML metadata (including `sdk: docker` and
+`app_port: 7860`) and use the included Dockerfile. Configure credentials using
+Space secrets. Keep the image port, Space port and platform environment consistent.
 
 ## Personal library and ZIP downloads
 
@@ -306,23 +311,20 @@ Telegram session names, and the browser's existing resume keys. No database
 migration is needed. Renaming storage merely for branding could hide existing
 records, so these compatibility identifiers remain intentionally.
 
-The existing deployment target remains `ftl-stream-proxy` so the workflow can
-update your deployed Worker. To create a separately named Worker, set
-`CLOUDFLARE_WORKER_NAME=gatestream-proxy` and update the bot's `BASE_URL` after
-deployment; this is optional. You can also enter a Worker name directly under
-**GitHub Actions → Deploy GateStream Worker → Run workflow**. The form overrides
-the repository variable for that run only; save the repository variable to use
-the same name for automatic deployments.
+Existing Worker names and deployments are unchanged by this origin update. Manage
+Worker deployment settings in the main GateStream repository; use the origin's
+public reverse proxy URL and keep `BASE_URL` pointing at your public entry point.
 
 ## Checks
 
 ```bash
 python -m unittest discover -s tests -v
-node --test cloudflare/worker.test.mjs
 ```
 
-The Node check applies to the GitHub package. Python checks use mocked services
-and do not need live Telegram or MongoDB connections.
+Lite includes the Python suite. Worker JavaScript/Node tests belong to the separate
+main repository and are needed when changing the edge Worker. Python tests use
+mocked services; the shutdown integration tests bind real loopback HTTP sockets.
+See [VALIDATION.md](VALIDATION.md) for release results and limits.
 
 ## Project history
 
