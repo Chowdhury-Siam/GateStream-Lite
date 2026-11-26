@@ -1,12 +1,3 @@
----
-title: GateStream
-emoji: ✨
-colorFrom: yellow
-colorTo: gray
-sdk: docker
-app_port: 7860
-pinned: false
----
 <div align="center">
   <img src="bot/server/templates/brand.svg" width="88" alt="GateStream gateway logo">
   <h1>GateStream</h1>
