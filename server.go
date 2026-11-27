@@ -99,14 +99,19 @@ func (a *App) chunk(ctx context.Context, doc bson.M, offset int64, sources map[*
 		return nil, ctx.Err()
 	}
 	var last error
-	workers := a.workers
+	workers := a.connectedWorkers()
+	for worker := range sources {
+		if !worker.connected() {
+			delete(sources, worker)
+		}
+	}
 	for attempt := 0; attempt < max(3, min(12, len(workers)*3)); attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		var chosen *Worker
 		for _, worker := range workers {
-			if worker.until.Load() <= time.Now().Unix() && (chosen == nil || worker.active.Load() < chosen.active.Load()) {
+			if worker.connected() && worker.until.Load() <= time.Now().Unix() && (chosen == nil || worker.active.Load() < chosen.active.Load()) {
 				chosen = worker
 			}
 		}
@@ -316,6 +321,13 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /ping", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-GateStream-Version", version)
 		io.WriteString(w, "OK")
+	})
+	mux.HandleFunc("GET /api/workers", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		jsonResponse(w, map[string]any{
+			"primary_connected": len(a.workers) != 0 && a.workers[0].connected(),
+			"auxiliary":         a.workerProgress(),
+		})
 	})
 	mux.HandleFunc("GET /api/activity", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
