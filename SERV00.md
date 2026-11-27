@@ -61,7 +61,7 @@ version you want. Keep the same SSH session for the next step.
 
 ```sh
 repo=Chowdhury-Siam/GateStream-Lite
-tag=v3.0.3
+tag=v3.0.4
 asset=gatestream-freebsd-amd64
 url="https://github.com/$repo/releases/download/$tag"
 mkdir -p bin
@@ -125,7 +125,7 @@ MEDIA_CACHE_MAX_MB=64
 CACHE_FREE_MB=128
 HANDLER_WORKERS=2
 GO_MAX_PROCS=2
-MAX_TRANSMISSIONS=2
+MAX_TRANSMISSIONS=16
 MAX_HTTP_CONNECTIONS=8
 MEMORY_CLEAN_MB=350
 MEMORY_RESTART_MB=440
@@ -149,6 +149,14 @@ background. `WORKER_START_CONCURRENCY` caps simultaneous auxiliary handshakes
 estimate approaches `MEMORY_CLEAN_MB`. The settings above leave headroom on a
 512 MB account. Go's memory target is soft, and connected workers and active
 downloads still use RAM and sockets. Check actual process RSS on your account.
+
+An existing `MAX_TRANSMISSIONS=2` still caps the whole process at two Telegram
+reads. For the first throughput test, try `MAX_TRANSMISSIONS=16` with the
+settings above, leaving your tokens and other deployment settings as they are.
+The shared payload budget and the available Go memory headroom limit how far
+each request reads ahead. Compare the same file through the origin and
+Cloudflare, separately, with the same byte range and number of download
+connections. See `BENCHMARK.md` for the matched local workload and results.
 
 ## First start and verification
 
