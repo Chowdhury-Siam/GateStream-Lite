@@ -1,4 +1,18 @@
-# GateStream 3.0.2 validation
+# GateStream-Lite v3.0.3 validation
+
+- All 38 Go tests passed on Linux AMD64. The new tests cover HTTP readiness
+  during auxiliary startup, memory and concurrency limits, retry, reconnect,
+  and cancellation. Both worker lifecycle tests also passed 25 repeat runs.
+- Go vet and deployment launcher checks passed.
+- The Linux AMD64 and FreeBSD AMD64 binaries built with CGO disabled. The
+  FreeBSD test binary cross-compiled.
+- Both release SHA256 hashes verified. The Linux foreground and Cron launchers
+  reported version 3.0.3.
+
+FreeBSD runtime behavior, live Telegram authentication, and process RSS under
+Serv00 account limits require a deployed check.
+
+## Previous validation for v3.0.2
 
 - Reproduced the v3.0.1 failure by running the compiled Linux test binary through
   a relative path: both lock test groups failed with `no such file or directory`.
