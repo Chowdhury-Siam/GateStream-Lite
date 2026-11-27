@@ -203,7 +203,7 @@ const pageTemplates = `
     <main>
       <header><a href="/">GateStream</a><a href="/index">Library</a></header>
       {{end}} {{define "foot"}}
-      <footer>GateStream 3.0.2</footer>
+      <footer>GateStream 3.0.3</footer>
     </main>
   </body>
 </html>
