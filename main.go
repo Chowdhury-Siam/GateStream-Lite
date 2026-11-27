@@ -34,7 +34,7 @@ type App struct {
 	config        Config
 	store         *Store
 	workers       []*Worker
-	dead          []string
+	aux           *auxWorkers
 	activity      *Activity
 	cache         *Cache
 	readSlots     chan struct{}
@@ -115,34 +115,34 @@ func run() error {
 	}()
 	log.Print("MongoDB connected")
 	a := &App{config: config, store: store, files: store, activity: newActivity(), cache: &Cache{dir: config.CacheDir, limit: config.CacheBytes, free: config.FreeBytes}, readSlots: make(chan struct{}, config.Concurrency), streamSlots: make(chan struct{}, config.MaxConnections), ctx: ctx, stop: cancel}
-	defer a.close()
-	for index, token := range append([]string{config.Token}, config.Workers...) {
-		worker, err := startWorker(ctx, config, index, token, root)
-		if err != nil {
-			if index == 0 {
-				return errors.New("primary Telegram client startup failed")
-			}
-			a.dead = append(a.dead, fmt.Sprintf("Worker %d · authentication or connection failed", index))
-			log.Printf("Worker %d could not connect", index)
-			continue
+	log.Print("Connecting primary Telegram client")
+	primary, err := startWorker(ctx, config, 0, config.Token, root)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil
 		}
-		a.workers = append(a.workers, worker)
+		return errors.New("primary Telegram client startup failed")
 	}
-	a.config.Username = a.workers[0].api.Me.Username
-	log.Printf("Telegram clients connected %d/%d", len(a.workers), len(config.Workers)+1)
-	flushCtx, flushCancel := context.WithTimeout(ctx, 12*time.Second)
-	_ = a.activity.flush(flushCtx, store)
-	flushCancel()
-	server := &http.Server{Handler: a.routes(), ReadHeaderTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
+	a.workers = []*Worker{primary}
+	a.config.Username = primary.api.Me.Username
+	a.aux = newAuxWorkers(config)
+	server := &http.Server{Handler: a.routes(), ReadHeaderTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10,
+		BaseContext: func(net.Listener) context.Context { return ctx }}
 	serveDone := make(chan error, 1)
-	go func() { serveDone <- server.Serve(listener) }()
 	a.ready.Store(true)
-	log.Printf("HTTP server ready on %s:%s", config.Bind, config.Port)
-	a.registerCommands(ctx)
-	a.wg.Add(2)
+	go func() { serveDone <- server.Serve(listener) }()
+	log.Printf("Primary Telegram client connected · HTTP ready on %s:%s · %d auxiliary workers queued", config.Bind, config.Port, len(config.Workers))
+	a.aux.start(ctx, config.Workers, func(ctx context.Context, slot int, token string) (*Worker, error) {
+		return startWorker(ctx, config, slot, token, root)
+	})
+	a.wg.Add(3)
+	go func() { defer a.wg.Done(); a.registerCommands(ctx) }()
 	go func() { defer a.wg.Done(); a.poll(ctx) }()
 	go func() {
 		defer a.wg.Done()
+		flushCtx, flushCancel := context.WithTimeout(ctx, 12*time.Second)
+		_ = a.activity.flush(flushCtx, store)
+		flushCancel()
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -167,6 +167,12 @@ func run() error {
 	}()
 	select {
 	case <-ctx.Done():
+	case <-primary.done:
+		if ctx.Err() == nil {
+			log.Print("Primary Telegram client stopped; restarting GateStream")
+			a.restart.Store(true)
+		}
+		cancel()
 	case err := <-serveDone:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Print("HTTP server stopped unexpectedly")
@@ -208,6 +214,9 @@ func (a *App) close() {
 		w.stop()
 	}
 	a.wg.Wait()
+	if a.aux != nil {
+		a.aux.wg.Wait()
+	}
 	for _, w := range a.workers {
 		select {
 		case <-w.done:
