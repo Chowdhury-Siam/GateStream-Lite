@@ -17,10 +17,11 @@ import (
 	"sync"
 )
 
-const version = "3.0.2"
+const version = "3.0.3"
 
 type Config struct {
 	GoProcs                                            int
+	WorkerStartConcurrency                             int
 	MaxConnections                                     int
 	MemoryRestartMB                                    int64
 	APIID                                              int
@@ -113,6 +114,7 @@ func loadConfig(root string) (Config, error) {
 		}
 	}
 	c.Workers = parseTokens(get("", "MULTI_BOT_TOKENS", "BOT_TOKENS"), c.Token)
+	c.WorkerStartConcurrency = int(number(2, 1, 8, "WORKER_START_CONCURRENCY"))
 	c.MongoURI = get("mongodb://localhost:27017", "DATABASE_URL", "MONGODB_URI")
 	c.Database = get("OmniArchiver", "DATABASE_NAME")
 	c.OmniURI = get("", "OMNI_MONGO_URI", "ANIME_MONGO_URI")
