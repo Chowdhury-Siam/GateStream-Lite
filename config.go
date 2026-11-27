@@ -17,7 +17,7 @@ import (
 	"sync"
 )
 
-const version = "3.0.3"
+const version = "3.0.4"
 
 type Config struct {
 	GoProcs                                            int
@@ -133,8 +133,8 @@ func loadConfig(root string) (Config, error) {
 	}
 	c.CacheBytes = number(500, 0, 1048576, "MEDIA_CACHE_MAX_MB") * 1024 * 1024
 	c.FreeBytes = number(64, 0, 1048576, "CACHE_FREE_MB") * 1024 * 1024
-	c.Concurrency = int(number(4, 1, 32, "MAX_TRANSMISSIONS"))
-	c.MaxConnections = int(number(int64(max(8, c.Concurrency*4)), 1, 256, "MAX_HTTP_CONNECTIONS"))
+	c.Concurrency = int(number(16, 1, 32, "MAX_TRANSMISSIONS"))
+	c.MaxConnections = int(number(int64(max(8, min(16, c.Concurrency*4))), 1, 256, "MAX_HTTP_CONNECTIONS"))
 	c.Handlers = int(number(2, 1, 32, "HANDLER_WORKERS"))
 	c.GoProcs = int(number(4, 1, 32, "GO_MAX_PROCS", "IO_WORKERS"))
 	c.Shutdown = int(number(20, 1, 120, "SHUTDOWN_TIMEOUT"))
