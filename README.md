@@ -1,4 +1,4 @@
-# GateStream-Lite 3.0.2
+# GateStream-Lite 3.0.3
 
 GateStream connects Telegram files to resumable HTTP downloads and browser
 playback. The bot, origin server, personal library, worker management, and
