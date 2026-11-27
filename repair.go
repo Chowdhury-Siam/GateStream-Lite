@@ -391,8 +391,13 @@ func (a *App) repair(ctx context.Context, channel int64) string {
 	if !authorized {
 		return "The owner account needs permission to add channel administrators."
 	}
-	added, present, blocked := 0, 0, 0
-	for _, worker := range a.workers[1:] {
+	added, present, blocked, pending := 0, 0, 0, 0
+	for _, slot := range a.aux.snapshot() {
+		worker := slot.worker
+		if worker == nil {
+			pending++
+			continue
+		}
 		if ctx.Err() != nil {
 			return "Worker repair stopped."
 		}
@@ -455,7 +460,7 @@ func (a *App) repair(ctx context.Context, channel int64) string {
 		}
 		added++
 	}
-	return fmt.Sprintf("Worker repair finished. Added %d · Already present %d · Blocked %d.", added, present, blocked)
+	return fmt.Sprintf("Worker repair finished. Added %d · Already present %d · Blocked %d · Not connected %d.", added, present, blocked, pending)
 }
 func floatValue(value any) float64 {
 	if v, ok := value.(float64); ok {
