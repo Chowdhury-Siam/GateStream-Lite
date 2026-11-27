@@ -157,6 +157,7 @@ type Worker struct {
 	ready  chan error
 	done   chan struct{}
 	mu     sync.Mutex
+	closed bool
 	peers  map[int64]Peer
 	pools  map[int]telegram.CloseInvoker
 	active atomic.Int64
@@ -176,7 +177,10 @@ func startWorker(ctx context.Context, c Config, index int, token, root string) (
 	if err := w.api.call(authCtx, "getMe", map[string]any{}, &w.api.Me); err != nil {
 		return nil, err
 	}
-	w.importPeers(root)
+	w.importPeers(authCtx, root)
+	if err := authCtx.Err(); err != nil {
+		return nil, err
+	}
 	w.client = telegram.NewClient(c.APIID, c.APIHash, telegram.Options{NoUpdates: true, SessionStorage: &session.FileStorage{Path: filepath.Join(c.SessionDir, name+".json")}})
 	w.rpc = w.client.API()
 	w.media = w.client
@@ -201,13 +205,19 @@ func startWorker(ctx context.Context, c Config, index int, token, root string) (
 			<-inner.Done()
 			return inner.Err()
 		})
+		if err == nil {
+			err = errors.New("Telegram client stopped")
+		}
 		select {
 		case w.ready <- err:
 		default:
 		}
 		w.mu.Lock()
-		defer w.mu.Unlock()
-		for _, pool := range w.pools {
+		w.closed = true
+		pools := w.pools
+		w.pools = nil
+		w.mu.Unlock()
+		for _, pool := range pools {
 			_ = pool.Close()
 		}
 	}()
@@ -215,23 +225,45 @@ func startWorker(ctx context.Context, c Config, index int, token, root string) (
 	case err := <-w.ready:
 		if err != nil {
 			stop()
+			<-w.done
+			if wait, ok := tgerr.AsFloodWait(err); ok {
+				return nil, &APIError{Code: 429, Wait: int(wait/time.Second) + 1}
+			}
 			return nil, errors.New("Telegram MTProto authentication failed")
 		}
 	case <-authCtx.Done():
 		stop()
+		<-w.done
 		return nil, errors.New("Telegram MTProto startup timed out")
+	}
+	if err := ctx.Err(); err != nil {
+		stop()
+		<-w.done
+		return nil, err
 	}
 	return w, nil
 }
 
-func (w *Worker) importPeers(root string) {
+func (w *Worker) connected() bool {
+	if w == nil {
+		return false
+	}
+	select {
+	case <-w.done:
+		return false
+	default:
+		return true
+	}
+}
+
+func (w *Worker) importPeers(ctx context.Context, root string) {
 	// Read previous Hydrogram peer hashes without changing the SQLite sessions.
 	for _, path := range []string{filepath.Join(root, w.name+".session"), filepath.Join(root, "sessions", w.name+".session")} {
 		db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: "mode=ro"}).String())
 		if err != nil {
 			continue
 		}
-		rows, err := db.Query("SELECT id, access_hash, username FROM peers WHERE id <= -1000000000000 LIMIT 512")
+		rows, err := db.QueryContext(ctx, "SELECT id, access_hash, username FROM peers WHERE id <= -1000000000000 LIMIT 512")
 		if err == nil {
 			for rows.Next() {
 				var id, hash int64
@@ -405,6 +437,10 @@ func (w *Worker) chunk(ctx context.Context, s Source, offset int64) ([]byte, err
 		return nil, errors.New("worker cooling down")
 	}
 	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return nil, errors.New("worker is disconnected")
+	}
 	pool := w.pools[s.DC]
 	if pool == nil {
 		var err error
