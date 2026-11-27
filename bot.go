@@ -575,7 +575,7 @@ func (a *App) stats(ctx context.Context, m Message) {
 	if err != nil {
 		counts = "Library count unavailable"
 	}
-	text := fmt.Sprintf("<b>GateStream %s · Live stats</b>\n\nUptime %s\nBots connected %d/%d\nGo heap %s · Go runtime memory %s\n\n%s\n\nActive connections %d\nSent %s\nFiles completed %d\nTotals storage %s", version, time.Duration(snapshot["uptime_seconds"].(float64))*time.Second, len(a.workers), len(a.config.Workers)+1, humanSize(int64(memory.HeapAlloc)), humanSize(int64(memory.Sys)), counts, num(media, "active"), humanSize(num(media, "bytes")), num(media, "single_downloads"), snapshot["persistence"].(map[string]any)["state"])
+	text := fmt.Sprintf("<b>GateStream %s · Live stats</b>\n\nUptime %s\nBots connected %d/%d\n%s\nGo heap %s · Go runtime memory %s\n\n%s\n\nActive connections %d\nSent %s\nFiles completed %d\nTotals storage %s", version, time.Duration(snapshot["uptime_seconds"].(float64))*time.Second, len(a.connectedWorkers()), len(a.config.Workers)+1, a.workerProgress(), humanSize(int64(memory.HeapAlloc)), humanSize(int64(memory.Sys)), counts, num(media, "active"), humanSize(num(media, "bytes")), num(media, "single_downloads"), snapshot["persistence"].(map[string]any)["state"])
 	var usage syscall.Rusage
 	if syscall.Getrusage(syscall.RUSAGE_SELF, &usage) == nil {
 		seconds := float64(usage.Utime.Sec+usage.Stime.Sec) + float64(usage.Utime.Usec+usage.Stime.Usec)/1e6
@@ -599,17 +599,26 @@ func (a *App) checkWorkers(ctx context.Context, m Message, args []string) {
 		a.reply(ctx, m, err.Error(), nil)
 		return
 	}
-	failures := append([]string{}, a.dead...)
-	for i, w := range a.workers {
+	slots := a.aux.snapshot()
+	var failures []string
+	workers := append([]*Worker(nil), a.workers...)
+	for i, slot := range slots {
+		if slot.worker == nil {
+			failures = append(failures, fmt.Sprintf("Worker %d · %s", i+1, slot.state))
+		} else {
+			workers = append(workers, slot.worker)
+		}
+	}
+	for _, w := range workers {
 		check, cancel := context.WithTimeout(ctx, 10*time.Second)
 		err := w.api.call(check, "sendMessage", map[string]any{"chat_id": channel, "text": fmt.Sprintf("GateStream worker check · @%s", w.api.Me.Username), "disable_notification": true}, nil)
 		cancel()
 		if err != nil {
-			failures = append(failures, fmt.Sprintf("Worker %d @%s · Could not post", i, w.api.Me.Username))
+			failures = append(failures, fmt.Sprintf("%s @%s · Could not post", w.name, w.api.Me.Username))
 		}
 	}
 	if len(failures) == 0 {
-		a.reply(ctx, m, fmt.Sprintf("All %d bots posted to the log.", len(a.workers)), nil)
+		a.reply(ctx, m, fmt.Sprintf("All %d bots posted to the log.", len(workers)), nil)
 		return
 	}
 	a.reply(ctx, m, "<b>Workers requiring attention</b>\n"+html.EscapeString(strings.Join(failures, "\n")), nil)
