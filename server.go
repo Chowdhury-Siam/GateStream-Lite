@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gotd/td/tgerr"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -91,69 +90,6 @@ func parseRange(header string, size int64) (byteRange, error) {
 	return r, nil
 }
 
-func (a *App) chunk(ctx context.Context, doc bson.M, offset int64, sources map[*Worker]Source) ([]byte, error) {
-	select {
-	case a.readSlots <- struct{}{}:
-		defer func() { <-a.readSlots }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	var last error
-	workers := a.connectedWorkers()
-	for worker := range sources {
-		if !worker.connected() {
-			delete(sources, worker)
-		}
-	}
-	for attempt := 0; attempt < max(3, min(12, len(workers)*3)); attempt++ {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		var chosen *Worker
-		for _, worker := range workers {
-			if worker.connected() && worker.until.Load() <= time.Now().Unix() && (chosen == nil || worker.active.Load() < chosen.active.Load()) {
-				chosen = worker
-			}
-		}
-		if chosen == nil {
-			return nil, errors.New("all workers are cooling down")
-		}
-		chosen.active.Add(1)
-		source, ok := sources[chosen]
-		if !ok {
-			lookup, cancelLookup := context.WithTimeout(ctx, 10*time.Second)
-			source, last = chosen.source(lookup, num(doc, "channel_id"), int(num(doc, "message_id")))
-			cancelLookup()
-			if last == nil {
-				sources[chosen] = source
-			}
-		}
-		var data []byte
-		if last == nil {
-			if source.Size != num(doc, "file_size") {
-				last = errors.New("Telegram media size changed")
-			} else {
-				data, last = chosen.chunk(ctx, source, offset)
-			}
-		}
-		chosen.active.Add(-1)
-		if last == nil && int64(len(data)) >= min(1<<20, num(doc, "file_size")-offset) {
-			return data, nil
-		}
-		if last == nil {
-			last = io.ErrUnexpectedEOF
-		}
-		if tgerr.Is(last, "FILE_REFERENCE_EXPIRED", "FILE_REFERENCE_INVALID") {
-			delete(sources, chosen)
-		} else {
-			chosen.until.Store(max(chosen.until.Load(), time.Now().Add(5*time.Second).Unix()))
-		}
-		// Every retry resolves the message on the selected account; references never cross bots.
-		last = nil
-	}
-	return nil, errors.New("Telegram media retries exhausted")
-}
-
 func (a *App) download(w http.ResponseWriter, r *http.Request) {
 	code := r.PathValue("code")
 	doc, err := a.files.File(r.Context(), code)
@@ -187,7 +123,8 @@ func (a *App) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	length := br.End - br.Start + 1
-	inline := r.URL.Query().Get("inline") == "1"
+	query := r.URL.Query()
+	inline := (query.Get("inline") == "1" || query.Get("stream") == "1") && query.Get("download") != "1" && query.Get("dl") != "1"
 	disposition := "attachment"
 	if inline && (strings.HasPrefix(mediaMIME(name, str(doc, "mime_type")), "video/") || strings.HasPrefix(mediaMIME(name, str(doc, "mime_type")), "audio/")) {
 		disposition = "inline"
@@ -225,69 +162,42 @@ func (a *App) download(w http.ResponseWriter, r *http.Request) {
 	a.activity.setStop(id, func() { _ = http.NewResponseController(w).SetWriteDeadline(time.Now()) })
 	failed := false
 	defer func() { a.activity.finish(id, failed) }()
-	sources := map[*Worker]Source{}
-	cachedChunk := func(offset int64) ([]byte, error) {
-		key := "go-" + digest(code+name+strconv.FormatInt(size, 10)) + "-" + strconv.FormatInt(offset, 10) + ".chunk"
-		if b := a.cache.get(key); b != nil {
-			return b, nil
+	cachePrefix := "go-" + digest(code+name+strconv.FormatInt(size, 10)) + "-"
+	fetch := func(ctx context.Context, offset int64) ([]byte, error) {
+		key := cachePrefix + strconv.FormatInt(offset, 10) + ".chunk"
+		if data := a.cache.get(key); int64(len(data)) == min(mediaChunkSize, size-offset) {
+			return data, nil
 		}
-		b, err := a.chunk(ctx, doc, offset, sources)
-		if err == nil && (offset < 4<<20 || offset >= max(0, size-(2<<20))) {
-			a.cache.put(key, b)
+		data, err := a.readChunk(ctx, mediaMessage{num(doc, "channel_id"), int(num(doc, "message_id"))}, size, offset)
+		if err == nil && (offset < 4*mediaChunkSize || offset >= max(0, size-2*mediaChunkSize)) {
+			a.cache.put(key, data)
 		}
-		return b, err
+		return data, err
 	}
-	firstOffset := (br.Start / (1 << 20)) * (1 << 20)
-	first, err := cachedChunk(firstOffset)
-	if err != nil {
-		failed = true
-		http.Error(w, "Telegram media unavailable. Retry shortly.", 503)
-		return
-	}
+	pipeline := a.prefetch(ctx, br, fetch)
+	defer pipeline.close()
 	client := r.Header.Get("X-GateStream-Client")
 	if len(client) != 64 || !hexValid(client) {
 		host, _, _ := net.SplitHostPort(r.RemoteAddr)
 		client = digest(host + "|" + r.UserAgent())
 	}
-	type chunkResult struct {
-		data []byte
-		err  error
-	}
-	ahead := make(chan chunkResult, 1)
-	go func() {
-		defer close(ahead)
-		for offset := firstOffset + (1 << 20); offset <= br.End; offset += 1 << 20 {
-			data, err := cachedChunk(offset)
-			select {
-			case ahead <- chunkResult{data, err}:
-			case <-ctx.Done():
-				return
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
-	headers()
 	position := br.Start
-	for offset := firstOffset; position <= br.End; offset += 1 << 20 {
-		data := first
-		if offset != firstOffset {
-			select {
-			case next, ok := <-ahead:
-				if !ok {
-					err = io.ErrUnexpectedEOF
-				} else {
-					data = next.data
-					err = next.err
-				}
-			case <-ctx.Done():
+	for position <= br.End {
+		offset, result := pipeline.next()
+		if result.err != nil {
+			if ctx.Err() != nil {
 				return
 			}
-		}
-		if err != nil {
-			failed = ctx.Err() == nil
+			failed = true
+			if position == br.Start {
+				http.Error(w, "Telegram media unavailable. Retry shortly.", 503)
+				return
+			}
 			panic(http.ErrAbortHandler)
+		}
+		data := result.data
+		if position == br.Start {
+			headers()
 		}
 		left := max(0, position-offset)
 		right := min(int64(len(data)), br.End-offset+1)
@@ -295,7 +205,9 @@ func (a *App) download(w http.ResponseWriter, r *http.Request) {
 			failed = true
 			panic(http.ErrAbortHandler)
 		}
+		writeStart := time.Now()
 		n, writeErr := w.Write(data[left:right])
+		pipeline.consume(time.Since(writeStart))
 		a.activity.progress(id, int64(n), code+":"+client, position, size, !inline)
 		position += int64(n)
 		if writeErr != nil {
