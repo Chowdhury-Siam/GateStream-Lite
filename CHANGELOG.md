@@ -1,5 +1,17 @@
 # Changelog
 
+## v3.0.4
+
+- Fetch Telegram chunks in parallel and deliver them in byte order. Adapt read-ahead
+  to upstream stalls, downstream writes, and available Go memory.
+- Share a bounded payload budget across responses and stop outstanding reads when
+  the download or playback request ends.
+- Select workers by active reads, recent latency, and cached media references. Reuse
+  each bot’s file references and MTProto pools by data center.
+- Keep byte ranges, seeks, resumes, and legacy playback query links compatible.
+- Add regression tests and a matched local HTTP benchmark against Python v2.0.36
+  and Go v3.0.3.
+
 ## v3.0.3
 
 - Start serving HTTP after the primary Telegram client connects. Auxiliary workers
