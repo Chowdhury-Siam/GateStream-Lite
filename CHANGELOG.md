@@ -1,5 +1,15 @@
 # Changelog
 
+## v3.0.3
+
+- Start serving HTTP after the primary Telegram client connects. Auxiliary workers
+  connect in the background and join the media pool when ready.
+- Limit simultaneous auxiliary handshakes according to memory headroom and
+  retry failed or disconnected workers with backoff.
+- Report live initialization progress in logs, /stats, /workers and /api/workers.
+- Cancel and join worker initialization, connected clients and retry waits
+  on shutdown. Keep existing worker tokens and session filenames.
+
 ## v3.0.2
 
 - Resolve the test executable to an absolute path before subprocess launches and
