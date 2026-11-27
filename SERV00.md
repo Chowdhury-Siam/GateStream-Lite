@@ -47,8 +47,8 @@ are read without modification. Keep the existing database name and contents.
 
 ## Download a versioned binary
 
-Choose a published tag from the **Releases** page of your GateStream-Lite GitHub
-repository. The direct download base is
+Choose a published tag from [GateStream-Lite Releases](https://github.com/Chowdhury-Siam/GateStream-Lite/releases)
+or the **Releases** page of your fork. The direct download base is
 `https://github.com/OWNER/LITE_REPOSITORY/releases/download/TAG`. Append
 `/gatestream-freebsd-amd64` for Serv00, `/gatestream-linux-amd64` for Linux, or
 `/SHA256SUMS` for the checksum manifest. For a private repository, download the
@@ -60,8 +60,8 @@ checksum and version. You can do this before stopping a running bot. Set
 version you want. Keep the same SSH session for the next step.
 
 ```sh
-repo=OWNER/LITE_REPOSITORY
-tag=v3.0.2
+repo=Chowdhury-Siam/GateStream-Lite
+tag=v3.0.3
 asset=gatestream-freebsd-amd64
 url="https://github.com/$repo/releases/download/$tag"
 mkdir -p bin
@@ -120,6 +120,7 @@ BIND_ADDRESS=127.0.0.1
 PORT=YOUR_RESERVED_PORT
 BASE_URL=https://your-worker.example
 MULTI_BOT_TOKENS=""
+WORKER_START_CONCURRENCY=2
 MEDIA_CACHE_MAX_MB=64
 CACHE_FREE_MB=128
 HANDLER_WORKERS=2
@@ -141,9 +142,13 @@ Allow disk space for sessions, logs, backups and both packaged binaries.
 `MEDIA_CACHE_MAX_MB` bounds recognized media chunks; `CACHE_FREE_MB` reserves
 filesystem free space where available. Account quotas can be smaller than
 reported filesystem free space: cache quota failures fall back to Telegram.
-Go's soft memory target is not a hard cap on hosting-account RAM. More worker
-clients and simultaneous downloads need more memory and sockets. Keep all
-resource settings configurable and measure actual usage on your account.
+GateStream reserves the HTTP port early, then starts handling requests as soon
+as the primary Telegram client is ready. Auxiliary bots connect in the
+background. `WORKER_START_CONCURRENCY` caps simultaneous auxiliary handshakes
+(including retries), and GateStream pauses new handshakes when its Go memory
+estimate approaches `MEMORY_CLEAN_MB`. The settings above leave headroom on a
+512 MB account. Go's memory target is soft, and connected workers and active
+downloads still use RAM and sockets. Check actual process RSS on your account.
 
 ## First start and verification
 
@@ -154,7 +159,11 @@ cd ~/GateStream-Lite
 
 Startup reads the configuration automatically. The logs report the version,
 platform, effective bind address/port, MongoDB status, configured/connected
-workers, media-cache budget and HTTP readiness. Readiness is logged after bind.
+workers, media-cache budget and HTTP readiness. The startup log reports worker
+progress, and `/api/workers` exposes aggregate counts without tokens or bot
+identities. `/stats` and `/workers` show progress from Telegram. Failed and
+disconnected auxiliary workers retry in the background with backoff. All
+configured tokens keep their original worker slots and session filenames.
 The rotating `event-log.txt` has two backups, unless `LOG_FILE` changes the path.
 Configuration errors before logging starts remain visible on standard error.
 
