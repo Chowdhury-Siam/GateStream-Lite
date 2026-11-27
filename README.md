@@ -10,7 +10,7 @@ direct downloads, and API links. The bot manages your catalog in MongoDB;
 the server retrieves media from Telegram as it streams. A dark interface,
 warm gold accents, and a gateway mark carry the identity from bot to browser.
 
-## GateStream-Lite v2.0.33
+## GateStream-Lite v2.0.34
 
 This repository contains the complete Python origin, Telegram bot, web interface,
 Dockerfile, scripts and tests. Extract the source ZIP so these files sit directly
