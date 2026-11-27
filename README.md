@@ -1,4 +1,4 @@
-# GateStream-Lite 3.0.3
+# GateStream-Lite 3.0.4
 
 GateStream connects Telegram files to resumable HTTP downloads and browser
 playback. The bot, origin server, personal library, worker management, and
@@ -68,8 +68,10 @@ The defaults retain `OmniArchiver` and the existing upstream configuration key.
 `GO_MAX_PROCS` caps Go scheduler CPUs, with legacy `IO_WORKERS` as an alias.
 An exported `GOMAXPROCS` takes precedence.
 
-`MAX_TRANSMISSIONS` bounds reads globally. `MAX_HTTP_CONNECTIONS` bounds media
-responses and their buffered look-ahead. `MEDIA_CACHE_MAX_MB` includes recognized
+`MAX_TRANSMISSIONS` bounds concurrent Telegram reads globally. Each media response
+adapts its read-ahead window, and concurrent responses share one payload budget.
+`MAX_HTTP_CONNECTIONS` bounds active media responses. See `SERV00.md` for Serv00
+settings and `BENCHMARK.md` for the local v3.0.4 comparison. `MEDIA_CACHE_MAX_MB` includes recognized
 legacy media chunks in its disk budget. Cache writes reserve `CACHE_FREE_MB`
 where filesystem information is available and tolerate quota errors.
 
