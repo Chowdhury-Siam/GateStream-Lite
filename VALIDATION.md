@@ -1,4 +1,24 @@
-# GateStream-Lite v3.0.3 validation
+# GateStream-Lite v3.0.4 validation
+
+- All 41 Go regression tests passed on Linux AMD64. The benchmark fixture
+  is skipped during ordinary tests and was run separately. The three new
+  parallel-read regression tests also passed 20 repeat runs.
+- Regression coverage includes out-of-order worker completion, byte-exact
+  playback ranges and legacy links, account-specific reference reuse,
+  shared buffer limits, cancellation, and per-DC connection reuse.
+- Go vet, deployment launcher checks, and all nine Cloudflare proxy tests
+  passed.
+- Both Linux AMD64 and FreeBSD AMD64 release builds passed SHA256
+  verification. The Linux foreground and Cron launchers reported version
+  3.0.4. The FreeBSD test binary cross-compiled.
+- See the measured rates and methodology in `BENCHMARK.md` and the raw
+  benchmark results in `benchmark-results.jsonl`. The fixture verifies
+  byte equality and HTTP Range responses.
+
+FreeBSD execution, live Telegram throughput and real Serv00 account memory
+usage have not been measured for this update.
+
+## Previous validation for v3.0.3
 
 - All 38 Go tests passed on Linux AMD64. The new tests cover HTTP readiness
   during auxiliary startup, memory and concurrency limits, retry, reconnect,
