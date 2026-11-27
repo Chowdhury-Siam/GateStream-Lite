@@ -1,4 +1,4 @@
-# GateStream 3.0.2 on Serv00 / FreeBSD
+# GateStream-Lite on Serv00 / FreeBSD
 
 Run the supplied native FreeBSD AMD64 binary as one application process.
 The release ZIP includes `bin/gatestream-freebsd-amd64`, its Linux counterpart,
@@ -47,22 +47,23 @@ are read without modification. Keep the existing database name and contents.
 
 ## Download a versioned binary
 
-Choose a published tag from [GitHub Releases](https://github.com/Chowdhury-Siam/GateStream/releases).
-Each release has direct downloads for FreeBSD AMD64, Linux AMD64, and the
-`SHA256SUMS` manifest. For example, once `v3.0.2` is published:
-
-- [FreeBSD AMD64](https://github.com/Chowdhury-Siam/GateStream/releases/download/v3.0.2/gatestream-freebsd-amd64)
-- [Linux AMD64](https://github.com/Chowdhury-Siam/GateStream/releases/download/v3.0.2/gatestream-linux-amd64)
-- [SHA256SUMS](https://github.com/Chowdhury-Siam/GateStream/releases/download/v3.0.2/SHA256SUMS)
+Choose a published tag from the **Releases** page of your GateStream-Lite GitHub
+repository. The direct download base is
+`https://github.com/OWNER/LITE_REPOSITORY/releases/download/TAG`. Append
+`/gatestream-freebsd-amd64` for Serv00, `/gatestream-linux-amd64` for Linux, or
+`/SHA256SUMS` for the checksum manifest. For a private repository, download the
+files while signed in and transfer them to Serv00 before verifying them.
 
 From the project directory on Serv00, stage the FreeBSD binary and verify its
-checksum and version. You can do this before stopping a running bot. Set `tag`
-to the published version you want and keep the same SSH session for the next step.
+checksum and version. You can do this before stopping a running bot. Set
+`repo` to the Lite repository's `OWNER/REPOSITORY` and `tag` to the published
+version you want. Keep the same SSH session for the next step.
 
 ```sh
+repo=OWNER/LITE_REPOSITORY
 tag=v3.0.2
 asset=gatestream-freebsd-amd64
-url="https://github.com/Chowdhury-Siam/GateStream/releases/download/$tag"
+url="https://github.com/$repo/releases/download/$tag"
 mkdir -p bin
 stage=$(mktemp -d "$PWD/bin/.gatestream-download.XXXXXX")
 (
@@ -91,6 +92,9 @@ After verification succeeds, install into a new checkout with
 `mv "$stage/$asset" "bin/$asset"`. For an existing installation, follow the
 upgrade steps below. The download manifest verifies the selected binary.
 `scripts/check-release.sh` verifies both binaries supplied together in a ZIP.
+If you transferred private release files to your home directory, replace the
+two `curl` commands with `cp "$HOME/$asset" "$asset.download"` and
+`cp "$HOME/SHA256SUMS" SHA256SUMS`.
 
 ## Reserve the HTTP port
 
@@ -267,13 +271,18 @@ transfer configuration and sessions, and update the Cron path if it changes.
 
 ## Publish a release from GitHub
 
-In the GitHub repository, push a new `vX.Y.Z` Git tag on the commit you want to
-release. The tag must match the version printed by the app. GitHub Actions
-builds both AMD64 binaries, creates `SHA256SUMS`, and publishes the release
-after the assets are uploaded.
-An existing published tag is left untouched. Use a new application version and
-tag for a corrected release. If a run leaves an unpublished draft, review or
-remove that draft before retrying.
+Commit the contents of the GateStream-Lite directory at the root of its own
+GitHub repository, including `.github/workflows/release-go.yml`. Change
+`const version` in `config.go` to a new `X.Y.Z` version and push it to `main`.
+GitHub Actions runs the Go tests, builds both AMD64 binaries, verifies
+`SHA256SUMS`, and publishes `vX.Y.Z` for that commit. GitHub creates the tag
+automatically when the release is published.
+
+To publish the current version or retry a failed build, open **Actions → Publish
+GateStream-Lite binaries → Run workflow** and choose `main`. Published releases
+and their assets are left untouched. Use a new app version for a correction.
+If an upload is interrupted and leaves a draft, review or remove the unpublished
+draft before retrying.
 
 ## Troubleshooting
 
@@ -294,8 +303,7 @@ remove that draft before retrying.
 
 The regression suite verifies launcher behavior, duplicate prevention, signal
 release and lock retention across exec on Linux. FreeBSD cross-compilation and
-binary checks are separate from execution. The GitHub workflow also defines a
-FreeBSD 14.3 VM job; its result must pass on your repository. Actual Serv00
+binary checks are separate from execution. Actual Serv00
 permissions, Cron scheduling, live Telegram/MongoDB and performance require
 verification on the deployed account.
 
