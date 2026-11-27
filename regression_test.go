@@ -379,7 +379,7 @@ func TestConcurrentReadBound(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			doc := a.files.(fakeFiles).doc
-			_, err := a.chunk(context.Background(), doc, 0, map[*Worker]Source{})
+			_, err := a.readChunk(context.Background(), mediaMessage{num(doc, "channel_id"), int(num(doc, "message_id"))}, num(doc, "file_size"), 0)
 			if err != nil {
 				t.Error(err)
 			}
