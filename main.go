@@ -38,6 +38,8 @@ type App struct {
 	activity      *Activity
 	cache         *Cache
 	readSlots     chan struct{}
+	bufferSlots   chan struct{}
+	workerPickMu  sync.Mutex
 	ready         atomic.Bool
 	ctx           context.Context
 	stop          context.CancelFunc
@@ -114,7 +116,7 @@ func run() error {
 		_ = store.client.Disconnect(closeCtx)
 	}()
 	log.Print("MongoDB connected")
-	a := &App{config: config, store: store, files: store, activity: newActivity(), cache: &Cache{dir: config.CacheDir, limit: config.CacheBytes, free: config.FreeBytes}, readSlots: make(chan struct{}, config.Concurrency), streamSlots: make(chan struct{}, config.MaxConnections), ctx: ctx, stop: cancel}
+	a := &App{config: config, store: store, files: store, activity: newActivity(), cache: &Cache{dir: config.CacheDir, limit: config.CacheBytes, free: config.FreeBytes}, readSlots: make(chan struct{}, config.Concurrency), bufferSlots: make(chan struct{}, mediaBufferLimit(config)), streamSlots: make(chan struct{}, config.MaxConnections), ctx: ctx, stop: cancel}
 	log.Print("Connecting primary Telegram client")
 	primary, err := startWorker(ctx, config, 0, config.Token, root)
 	if err != nil {
