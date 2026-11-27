@@ -150,20 +150,26 @@ type mediaPools interface {
 }
 
 type Worker struct {
-	media  mediaPools
-	api    *BotAPI
-	client *telegram.Client
-	name   string
-	ready  chan error
-	done   chan struct{}
-	mu     sync.Mutex
-	closed bool
-	peers  map[int64]Peer
-	pools  map[int]telegram.CloseInvoker
-	active atomic.Int64
-	until  atomic.Int64
-	stop   context.CancelFunc
-	rpc    *tg.Client
+	media         mediaPools
+	api           *BotAPI
+	client        *telegram.Client
+	name          string
+	ready         chan error
+	done          chan struct{}
+	mu            sync.Mutex
+	closed        bool
+	peers         map[int64]Peer
+	pools         map[int]telegram.CloseInvoker
+	mediaRPC      map[int]*tg.Client
+	poolPending   map[int]chan struct{}
+	mediaPoolSize int64
+	refMu         sync.Mutex
+	refs          map[mediaMessage]*mediaReference
+	readMicros    atomic.Int64
+	active        atomic.Int64
+	until         atomic.Int64
+	stop          context.CancelFunc
+	rpc           *tg.Client
 }
 
 func startWorker(ctx context.Context, c Config, index int, token, root string) (*Worker, error) {
@@ -172,6 +178,15 @@ func startWorker(ctx context.Context, c Config, index int, token, root string) (
 		name = "worker_" + strconv.Itoa(index)
 	}
 	w := &Worker{name: name, api: &BotAPI{Token: token, HTTP: &http.Client{Timeout: 40 * time.Second}}, ready: make(chan error, 1), done: make(chan struct{}), peers: map[int64]Peer{}, pools: map[int]telegram.CloseInvoker{}}
+	// gotd leases one connection per active RPC. Open additional
+	// connections only when parallel reads actually need them.
+	w.mediaPoolSize = 1
+	if len(c.Workers) < 3 {
+		w.mediaPoolSize = 4
+	} else if len(c.Workers) < 8 {
+		w.mediaPoolSize = 2
+	}
+	w.mediaPoolSize = min(w.mediaPoolSize, int64(c.Concurrency))
 	authCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := w.api.call(authCtx, "getMe", map[string]any{}, &w.api.Me); err != nil {
@@ -216,6 +231,7 @@ func startWorker(ctx context.Context, c Config, index int, token, root string) (
 		w.closed = true
 		pools := w.pools
 		w.pools = nil
+		w.mediaRPC = nil
 		w.mu.Unlock()
 		for _, pool := range pools {
 			_ = pool.Close()
@@ -432,37 +448,103 @@ func mediaMIME(name, value string) string {
 	return value
 }
 
-func (w *Worker) chunk(ctx context.Context, s Source, offset int64) ([]byte, error) {
-	if w.until.Load() > time.Now().Unix() {
-		return nil, errors.New("worker cooling down")
-	}
-	w.mu.Lock()
-	if w.closed {
-		w.mu.Unlock()
-		return nil, errors.New("worker is disconnected")
-	}
-	pool := w.pools[s.DC]
-	if pool == nil {
-		var err error
-		if s.DC == w.media.Config().ThisDC {
-			pool, err = w.media.Pool(1)
-		} else {
-			pool, err = w.media.DC(ctx, s.DC, 1)
+// One persistent media invoker per authorization and DC. A cold DC permits
+// one creator; peer resolution and already-warm DCs keep running meanwhile.
+func (w *Worker) mediaClient(ctx context.Context, dc int) (*tg.Client, error) {
+	for {
+		w.mu.Lock()
+		if w.closed {
+			w.mu.Unlock()
+			return nil, errors.New("worker is disconnected")
 		}
+		if rpc := w.mediaRPC[dc]; rpc != nil {
+			w.mu.Unlock()
+			return rpc, nil
+		}
+		if w.mediaRPC == nil {
+			w.mediaRPC = make(map[int]*tg.Client)
+		}
+		if pool := w.pools[dc]; pool != nil {
+			rpc := tg.NewClient(pool)
+			w.mediaRPC[dc] = rpc
+			w.mu.Unlock()
+			return rpc, nil
+		}
+		if pending := w.poolPending[dc]; pending != nil {
+			w.mu.Unlock()
+			select {
+			case <-pending:
+				continue
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		pending := make(chan struct{})
+		if w.poolPending == nil {
+			w.poolPending = make(map[int]chan struct{})
+		}
+		w.poolPending[dc] = pending
+		w.mu.Unlock()
+
+		var pool telegram.CloseInvoker
+		var err error
+		if dc == w.media.Config().ThisDC {
+			pool, err = w.media.Pool(max(1, w.mediaPoolSize))
+		} else {
+			pool, err = w.media.DC(ctx, dc, max(1, w.mediaPoolSize))
+		}
+		w.mu.Lock()
+		delete(w.poolPending, dc)
+		close(pending)
 		if err != nil {
 			w.mu.Unlock()
 			return nil, err
 		}
-		w.pools[s.DC] = pool
+		if w.closed {
+			w.mu.Unlock()
+			_ = pool.Close()
+			return nil, errors.New("worker is disconnected")
+		}
+		rpc := tg.NewClient(pool)
+		if w.pools == nil {
+			w.pools = make(map[int]telegram.CloseInvoker)
+		}
+		w.pools[dc] = pool
+		w.mediaRPC[dc] = rpc
+		w.mu.Unlock()
+		return rpc, nil
 	}
-	w.mu.Unlock()
+}
+
+func (w *Worker) coolDown(wait time.Duration) {
+	until := time.Now().Add(wait).Unix()
+	for previous := w.until.Load(); until > previous; previous = w.until.Load() {
+		if w.until.CompareAndSwap(previous, until) {
+			return
+		}
+	}
+}
+
+func (w *Worker) applyFloodWait(err error) {
+	if wait, ok := tgerr.AsFloodWait(err); ok {
+		w.coolDown(wait + time.Second)
+	}
+}
+
+func (w *Worker) chunk(ctx context.Context, s Source, offset int64) ([]byte, error) {
+	if w.until.Load() > time.Now().Unix() {
+		return nil, errors.New("worker cooling down")
+	}
 	chunkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	result, err := tg.NewClient(pool).UploadGetFile(chunkCtx, &tg.UploadGetFileRequest{Location: s.Location, Offset: offset, Limit: 1 << 20})
+	rpc, err := w.mediaClient(chunkCtx, s.DC)
 	if err != nil {
-		if wait, ok := tgerr.AsFloodWait(err); ok {
-			w.until.Store(time.Now().Add(wait + time.Second).Unix())
-		}
+		w.applyFloodWait(err)
+		return nil, err
+	}
+	result, err := rpc.UploadGetFile(chunkCtx, &tg.UploadGetFileRequest{Location: s.Location, Offset: offset, Limit: mediaChunkSize})
+	if err != nil {
+		w.applyFloodWait(err)
 		return nil, err
 	}
 	part, ok := result.(*tg.UploadFile)
